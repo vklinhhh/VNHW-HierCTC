@@ -1,0 +1,40 @@
+{
+  "hierarchical_mode": "sequential",
+  "model_description": "Sequential-HCTC-DynFusion+FeatEnh+CDC",
+  "components_present": {
+    "base_classifier": true,
+    "diacritic_classifier": true,
+    "final_classifier": true,
+    "dynamic_fusion": true,
+    "feature_enhancer": true,
+    "visual_diacritic_attention": false,
+    "character_diacritic_compatibility": true,
+    "few_shot_diacritic_adapter": false,
+    "diacritic_fusion": true,
+    "final_fusion": true,
+    "diacritic_condition_proj": false,
+    "diacritic_gate": false
+  },
+  "architecture_details": {
+    "vision_encoder_layers": [
+      -7,
+      -4,
+      -1
+    ],
+    "fusion_method": "concat_proj",
+    "transformer_layers": 6,
+    "conditioning_method": "concat_proj"
+  },
+  "enhancement_modules": {
+    "visual_diacritic_attention": false,
+    "character_diacritic_compatibility": true,
+    "few_shot_diacritic_adapter": false,
+    "dynamic_fusion": true,
+    "feature_enhancer": true
+  },
+  "vocabulary_sizes": {
+    "base_chars": 95,
+    "diacritics": 25,
+    "combined": 229
+  }
+}
