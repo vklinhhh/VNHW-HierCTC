@@ -22,3 +22,8 @@ scikit-learn>=1.2.0
 opencv-python>=4.7.0
 jiwer
 flask
+
+# Optional: OCR comparison tools (install as needed)
+# vietocr>=0.3.5
+# pytesseract>=0.3.10
+# easyocr>=1.7.0
