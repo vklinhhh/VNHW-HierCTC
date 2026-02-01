@@ -1,0 +1,266 @@
+import re
+import unicodedata
+import logging
+from typing import List, Dict, Tuple
+
+from .constants import VIETNAMESE_CONSONANTS, VIETNAMESE_VOWELS_ALL
+
+logger = logging.getLogger(__name__)
+
+REPEATED_CHAR_END_PATTERN = re.compile(r'(.)\1+$')
+TRAILING_ARTIFACT_PATTERN = re.compile(r'\s+[a-zA-Z]\s*$')
+
+
+def normalize_unicode(text: str) -> str:
+    return unicodedata.normalize('NFC', text)
+
+
+def get_char_base_and_diacritics(char: str) -> Tuple[str, List[str]]:
+    if len(char) != 1:
+        return char, []
+    
+    nfd = unicodedata.normalize('NFD', char)
+    base = ''
+    diacritics = []
+    
+    for c in nfd:
+        if unicodedata.category(c) == 'Mn':
+            diacritics.append(c)
+        else:
+            base += c
+    
+    return base, diacritics
+
+
+def is_valid_vietnamese_syllable(syllable: str) -> Tuple[bool, str]:
+    if not syllable:
+        return True, ""
+    
+    syllable_lower = syllable.lower()
+    
+    match = REPEATED_CHAR_END_PATTERN.search(syllable_lower)
+    if match:
+        return False, f"repeated_char_end:{match.group()}"
+    
+    if re.search(r'[^aeiouăâêôơưq]iy', syllable_lower):
+        return False, "invalid_iy_pattern"
+    
+    y_match = re.search(r'([^qguaeiouăâêôơư])y(?![aeiouăâêôơư])', syllable_lower)
+    if y_match:
+        return False, f"invalid_y_after:{y_match.group(1)}"
+    
+    return True, ""
+
+
+def fix_repeated_characters(word: str) -> Tuple[str, bool]:
+    if len(word) < 2:
+        return word, False
+
+    original = word
+    
+    while len(word) >= 2 and word[-1] == word[-2]:
+        word = word[:-1]
+    
+    return word, word != original
+
+
+def fix_invalid_y_pattern(word: str, use_lm: bool = False, lm_model=None) -> Tuple[str, bool]:
+    word_lower = word.lower()
+    
+    match = re.search(r'([bcdfghjklmnprstvx])iy$', word_lower)
+    if match:
+        if use_lm and lm_model:
+            candidates = [
+                word[:-2] + 'ì',
+                word[:-2] + 'í',
+                word[:-2] + 'ỉ',
+                word[:-2] + 'ĩ',
+                word[:-2] + 'ị',
+                word[:-2] + 'ỳ',
+                word[:-2] + 'ý',
+                word[:-2] + 'ỷ',
+                word[:-2] + 'ỹ',
+                word[:-2] + 'ỵ',
+            ]
+            
+            best_candidate = word[:-2] + 'ỳ'
+            best_score = float('-inf')
+            
+            for candidate in candidates:
+                try:
+                    score = lm_model.score_sentence(candidate)
+                    if score > best_score:
+                        best_score = score
+                        best_candidate = candidate
+                except:
+                    pass
+            
+            return best_candidate, True
+        else:
+            return word[:-1], True
+    
+    return word, False
+
+
+def fix_trailing_artifacts(text: str) -> Tuple[str, bool]:
+    original = text
+    text = re.sub(r'\s+[bcdfghjklmnpqrstvwxz]\s*$', '', text, flags=re.IGNORECASE)
+    return text.strip(), text.strip() != original.strip()
+
+
+def check_diacritic_validity(char: str) -> Tuple[bool, str]:
+    base, diacritics = get_char_base_and_diacritics(char)
+    
+    if not diacritics:
+        return True, ""
+    
+    base_lower = base.lower()
+    
+    for diac in diacritics:
+        if diac == '\u0302':
+            if base_lower not in 'aeo':
+                return False, f"invalid_circumflex_on_{base}"
+        
+        if diac == '\u0306':
+            if base_lower != 'a':
+                return False, f"invalid_breve_on_{base}"
+        
+        if diac == '\u031B':
+            if base_lower not in 'ou':
+                return False, f"invalid_horn_on_{base}"
+    
+    return True, ""
+
+
+class VietnameseConservativePostProcessor:
+    def __init__(
+        self,
+        enable_repeated_char_fix: bool = True,
+        enable_invalid_pattern_fix: bool = True,
+        enable_trailing_artifact_fix: bool = True,
+        enable_diacritic_check: bool = True,
+        use_lm_for_ambiguous: bool = False,
+        lm_model=None
+    ):
+        self.enable_repeated_char_fix = enable_repeated_char_fix
+        self.enable_invalid_pattern_fix = enable_invalid_pattern_fix
+        self.enable_trailing_artifact_fix = enable_trailing_artifact_fix
+        self.enable_diacritic_check = enable_diacritic_check
+        self.use_lm_for_ambiguous = use_lm_for_ambiguous
+        self.lm_model = lm_model
+        
+        logger.info("VietnameseConservativePostProcessor initialized")
+    
+    def process(self, text: str) -> Tuple[str, Dict]:
+        text = normalize_unicode(text)
+        
+        metadata = {
+            'original': text,
+            'corrections': [],
+            'checks_passed': [],
+            'checks_failed': []
+        }
+        
+        if self.enable_trailing_artifact_fix:
+            text, changed = fix_trailing_artifacts(text)
+            if changed:
+                metadata['corrections'].append({
+                    'type': 'trailing_artifact',
+                    'original': metadata['original'],
+                    'fixed': text
+                })
+        
+        words = text.split()
+        corrected_words = []
+        
+        for word in words:
+            corrected_word = word
+            
+            if self.enable_repeated_char_fix:
+                corrected_word, changed = fix_repeated_characters(corrected_word)
+                if changed:
+                    metadata['corrections'].append({
+                        'type': 'repeated_char',
+                        'original': word,
+                        'fixed': corrected_word
+                    })
+            
+            if self.enable_invalid_pattern_fix:
+                is_valid, reason = is_valid_vietnamese_syllable(corrected_word)
+                if not is_valid:
+                    if 'invalid_iy_pattern' in reason or 'invalid_y_after' in reason:
+                        old_word = corrected_word
+                        corrected_word, changed = fix_invalid_y_pattern(
+                            corrected_word,
+                            use_lm=self.use_lm_for_ambiguous,
+                            lm_model=self.lm_model
+                        )
+                        if changed:
+                            metadata['corrections'].append({
+                                'type': 'invalid_pattern',
+                                'reason': reason,
+                                'original': old_word,
+                                'fixed': corrected_word
+                            })
+                    metadata['checks_failed'].append({
+                        'word': word,
+                        'reason': reason
+                    })
+                else:
+                    metadata['checks_passed'].append(word)
+            
+            if self.enable_diacritic_check:
+                for char in corrected_word:
+                    is_valid, reason = check_diacritic_validity(char)
+                    if not is_valid:
+                        metadata['checks_failed'].append({
+                            'word': corrected_word,
+                            'char': char,
+                            'reason': reason
+                        })
+            
+            corrected_words.append(corrected_word)
+        
+        corrected_text = ' '.join(corrected_words)
+        metadata['final'] = corrected_text
+        metadata['was_modified'] = corrected_text != metadata['original']
+        
+        return corrected_text, metadata
+    
+    def set_language_model(self, lm_model):
+        self.lm_model = lm_model
+        self.use_lm_for_ambiguous = lm_model is not None
+
+
+def create_conservative_postprocessor(
+    use_lm: bool = False,
+    lm_type: str = 'ngram'
+) -> VietnameseConservativePostProcessor:
+    lm_model = None
+    
+    if use_lm:
+        if lm_type == 'phobert':
+            try:
+                from .phobert_model import PhoBERTLanguageModel
+                lm_model = PhoBERTLanguageModel(device='cpu')
+                logger.info("Using PhoBERT for ambiguous corrections")
+            except Exception as e:
+                logger.warning(f"Could not load PhoBERT: {e}")
+        elif lm_type == 'ngram':
+            try:
+                from .ngram_model import VietnameseNGramModel, create_sample_vietnamese_corpus
+                corpus = create_sample_vietnamese_corpus()
+                lm_model = VietnameseNGramModel(n=3, smoothing='laplace')
+                lm_model.train(corpus)
+                logger.info("Using n-gram LM for ambiguous corrections")
+            except Exception as e:
+                logger.warning(f"Could not create n-gram model: {e}")
+    
+    return VietnameseConservativePostProcessor(
+        enable_repeated_char_fix=True,
+        enable_invalid_pattern_fix=True,
+        enable_trailing_artifact_fix=True,
+        enable_diacritic_check=True,
+        use_lm_for_ambiguous=use_lm,
+        lm_model=lm_model
+    )
