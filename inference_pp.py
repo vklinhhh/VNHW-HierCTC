@@ -1,4 +1,4 @@
-# inference_conservative.py
+# inference_pp.py
 import os
 import sys
 import argparse
@@ -238,27 +238,27 @@ Examples:
     python inference_pp.py \\
         --model_path ./ckpt/best_model_hf \\
         --vocab_path ./ckpt/best_model_hf/vocabularies/combined_char_vocab.json \\
-        --image ./test.png
+        --image ./test_data/test.png
 
     # Show raw OCR vs corrected
     python inference_pp.py \\
         --model_path ./ckpt/best_model_hf \\
         --vocab_path ./ckpt/best_model_hf/vocabularies/combined_char_vocab.json \\
-        --image ./test.png \\
+        --image ./test_data/test.png \\
         --show-raw
 
     # Disable post-processing (raw OCR only)
     python inference_pp.py \\
         --model_path ./ckpt/best_model_hf \\
         --vocab_path ./ckpt/best_model_hf/vocabularies/combined_char_vocab.json \\
-        --image ./test.png \\
+        --image ./test_data/test.png \\
         --no-postprocessing
 
     # Process folder
     python inference_pp.py \\
         --model_path ./ckpt/best_model_hf \\
         --vocab_path ./ckpt/best_model_hf/vocabularies/combined_char_vocab.json \\
-        --folder ./images \\
+        --folder ./test_data \\
         --output results.csv
         """
     )
