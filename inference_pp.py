@@ -235,27 +235,27 @@ def main():
         epilog="""
 Examples:
     # Basic inference with conservative post-processing
-    python inference_conservative.py \\
+    python inference_pp.py \\
         --model_path ./ckpt/best_model_hf \\
         --vocab_path ./ckpt/best_model_hf/vocabularies/combined_char_vocab.json \\
         --image ./test.png
 
     # Show raw OCR vs corrected
-    python inference_conservative.py \\
+    python inference_pp.py \\
         --model_path ./ckpt/best_model_hf \\
         --vocab_path ./ckpt/best_model_hf/vocabularies/combined_char_vocab.json \\
         --image ./test.png \\
         --show-raw
 
     # Disable post-processing (raw OCR only)
-    python inference_conservative.py \\
+    python inference_pp.py \\
         --model_path ./ckpt/best_model_hf \\
         --vocab_path ./ckpt/best_model_hf/vocabularies/combined_char_vocab.json \\
         --image ./test.png \\
         --no-postprocessing
 
     # Process folder
-    python inference_conservative.py \\
+    python inference_pp.py \\
         --model_path ./ckpt/best_model_hf \\
         --vocab_path ./ckpt/best_model_hf/vocabularies/combined_char_vocab.json \\
         --folder ./images \\
