@@ -15,6 +15,14 @@ def normalize_unicode(text: str) -> str:
     return unicodedata.normalize('NFC', text)
 
 
+def has_tone_mark(char: str) -> bool:
+    if len(char) != 1:
+        return False
+    nfd = unicodedata.normalize('NFD', char)
+    tone_marks = {'\u0300', '\u0301', '\u0303', '\u0309', '\u0323'}   #grave, acute, tilde, hook, dot
+    return any(c in tone_marks for c in nfd)
+
+
 def get_char_base_and_diacritics(char: str) -> Tuple[str, List[str]]:
     if len(char) != 1:
         return char, []
@@ -132,6 +140,87 @@ def check_diacritic_validity(char: str) -> Tuple[bool, str]:
     return True, ""
 
 
+def fix_malformed_diacritics(char: str) -> Tuple[str, bool]:
+    base, diacritics = get_char_base_and_diacritics(char)
+    
+    if len(diacritics) <= 1:
+        return char, False
+    
+    shape_marks = {'\u0302', '\u0306', '\u031B'}   #circumflex, breve, horn
+    tone_marks = {'\u0300', '\u0301', '\u0303', '\u0309', '\u0323'}   #grave, acute, tilde, hook, dot
+    
+    shape_mark = None
+    tone_mark = None
+    
+    for diac in diacritics:
+        if diac in shape_marks:
+            if shape_mark is None:
+                shape_mark = diac
+        elif diac in tone_marks:
+            if tone_mark is None:
+                tone_mark = diac
+    new_char = base
+    if shape_mark:
+        new_char += shape_mark
+    if tone_mark:
+        new_char += tone_mark
+    
+    new_char = unicodedata.normalize('NFC', new_char)
+    
+    changed = new_char != char
+    return new_char, changed
+
+
+def fix_duplicate_tone_marks(word: str) -> Tuple[str, bool]:
+    #Mộẹ -> Mộ
+    if len(word) < 2:
+        return word, False
+    
+    vietnamese_vowels = set('aàáảãạăằắẳẵặâầấẩẫậeèéẻẽẹêềếểễệiìíỉĩịoòóỏõọôồốổỗộơờớởỡợuùúủũụưừứửữựyỳýỷỹỵ')
+    
+    result = []
+    i = 0
+    changed = False
+    
+    while i < len(word):
+        current_char = word[i]
+        result.append(current_char)
+        
+        if current_char.lower() in vietnamese_vowels and has_tone_mark(current_char):
+            j = i + 1
+            while j < len(word) and word[j].lower() in vietnamese_vowels and has_tone_mark(word[j]):
+                changed = True
+                j += 1
+            i = j
+        else:
+            i += 1
+    
+    return ''.join(result), changed
+
+
+def fix_inconsistent_capitalization(word: str) -> Tuple[str, bool]:
+    if len(word) < 2:
+        return word, False
+    
+    original_word = word
+    if word[0].lower() == word[1].lower() and word[0].islower() and word[1].isupper():
+        word = word[1:].lower()
+        return word, True
+    has_mixed_case = False
+    for i in range(len(word) - 1):
+        if word[i].islower() and word[i+1].isupper():
+            has_mixed_case = True
+            break
+    
+    if has_mixed_case:
+        if word[0].islower() and word[1].isupper():
+            word = word.lower()
+        else:
+            word = word[0] + word[1:].lower()
+    
+    return word, word != original_word
+
+
 class VietnameseConservativePostProcessor:
     def __init__(
         self,
@@ -139,6 +228,8 @@ class VietnameseConservativePostProcessor:
         enable_invalid_pattern_fix: bool = True,
         enable_trailing_artifact_fix: bool = True,
         enable_diacritic_check: bool = True,
+        enable_diacritic_fix: bool = True,
+        enable_capitalization_fix: bool = True,
         use_lm_for_ambiguous: bool = False,
         lm_model=None
     ):
@@ -146,6 +237,8 @@ class VietnameseConservativePostProcessor:
         self.enable_invalid_pattern_fix = enable_invalid_pattern_fix
         self.enable_trailing_artifact_fix = enable_trailing_artifact_fix
         self.enable_diacritic_check = enable_diacritic_check
+        self.enable_diacritic_fix = enable_diacritic_fix
+        self.enable_capitalization_fix = enable_capitalization_fix
         self.use_lm_for_ambiguous = use_lm_for_ambiguous
         self.lm_model = lm_model
         
@@ -175,6 +268,39 @@ class VietnameseConservativePostProcessor:
         
         for word in words:
             corrected_word = word
+            if self.enable_capitalization_fix:
+                corrected_word, changed = fix_inconsistent_capitalization(corrected_word)
+                if changed:
+                    metadata['corrections'].append({
+                        'type': 'inconsistent_capitalization',
+                        'original': word,
+                        'fixed': corrected_word
+                    })
+            if self.enable_diacritic_fix:
+                corrected_word, changed = fix_duplicate_tone_marks(corrected_word)
+                if changed:
+                    metadata['corrections'].append({
+                        'type': 'duplicate_tone_marks',
+                        'original': word,
+                        'fixed': corrected_word
+                    })
+            if self.enable_diacritic_fix:
+                fixed_chars = []
+                word_changed = False
+                for char in corrected_word:
+                    fixed_char, changed = fix_malformed_diacritics(char)
+                    fixed_chars.append(fixed_char)
+                    if changed:
+                        word_changed = True
+                
+                if word_changed:
+                    old_word = corrected_word
+                    corrected_word = ''.join(fixed_chars)
+                    metadata['corrections'].append({
+                        'type': 'malformed_diacritics',
+                        'original': old_word,
+                        'fixed': corrected_word
+                    })
             
             if self.enable_repeated_char_fix:
                 corrected_word, changed = fix_repeated_characters(corrected_word)
@@ -261,6 +387,8 @@ def create_conservative_postprocessor(
         enable_invalid_pattern_fix=True,
         enable_trailing_artifact_fix=True,
         enable_diacritic_check=True,
+        enable_diacritic_fix=True,
+        enable_capitalization_fix=True,
         use_lm_for_ambiguous=use_lm,
         lm_model=lm_model
     )
