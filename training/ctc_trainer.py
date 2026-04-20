@@ -18,6 +18,7 @@ from utils.schedulers import CosineWarmupWithPlateauScheduler
 
 logger = logging.getLogger('CtcTrainer')
 logger.setLevel(logging.INFO)
+logger.propagate = False
 if not logger.handlers:
     ch = logging.StreamHandler(sys.stdout)
     ch.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
