@@ -233,7 +233,7 @@ def main():
                         help='Number of final Transformer encoder layers to TUNE. 0 means tune all. Vision encoder and earlier custom layers will be frozen if > 0.')
     parser.add_argument('--freeze_diacritic_enhancements', action='store_true',
                         help='If freezing, also freeze diacritic enhancement modules (VDA, FSA). Compatibility matrix is usually still tuned.')
-    parser.add_argument('--hierarchical_mode', type=str, default='enhanced_single',
+    parser.add_argument('--hierarchical_mode', type=str, default='sequential',
                         choices=['parallel', 'sequential', 'multitask', 'enhanced_single'],
                         help='Hierarchical processing mode: '
                             'parallel (original), sequential (true hierarchy), '

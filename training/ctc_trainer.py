@@ -81,8 +81,12 @@ def train_ctc_model(
     eval_steps=None,
     early_stopping_patience=5,
     early_stopping_metric='val_loss',
+    best_metric_name=None,
     log_compatibility_matrix_interval=5000,
 ):
+    if best_metric_name is None:
+        best_metric_name = early_stopping_metric
+
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logger.info(f"Trainer using device: {device}")
@@ -105,7 +109,7 @@ def train_ctc_model(
                 "best_metric_name": best_metric_name,
                 "num_workers": num_workers, "eval_steps": eval_steps, "log_interval": log_interval,
                 "weight_decay": optimizer.defaults.get('weight_decay', None),
-                "model_type": model.config.model_type, # Get from model's config
+                "model_type": model.config.model_type,
                 "vocab_size": getattr(model.config, 'combined_char_vocab_size', getattr(model.config, 'vocab_size', None)),
             }
             wandb_run = wandb.init(project=project_name, name=run_name, resume="allow", config=wandb_config)
@@ -154,7 +158,7 @@ def train_ctc_model(
                     logger.info("Found scaler state in checkpoint.")
                 else:
                     logger.warning("Resuming training, but scaler state not found in checkpoint.")
-                del checkpoint # Free memory
+                del checkpoint
             except Exception as e:
                 logger.warning(f"Could not read checkpoint {potential_checkpoint_path} to check for scaler state: {e}")
 
@@ -190,13 +194,12 @@ def train_ctc_model(
 
     try:
         for epoch in range(start_epoch, epochs):
-            if epoch % 5 == 0 and epoch > 0:  # Every 5 epochs after epoch 0
+            if epoch % 5 == 0 and epoch > 0:
                 apply_linguistic_correction(model, correction_strength=0.05)
                 logger.info(f"Applied linguistic correction at epoch {epoch}")
             current_epoch_num = epoch + 1
             logger.info(f"Starting Epoch {current_epoch_num}/{epochs}")
 
-            # --- Epoch Training ---
             model.train()
             epoch_train_loss = 0.0
             batches_processed_in_epoch = 0
@@ -244,7 +247,6 @@ def train_ctc_model(
                             except RuntimeError as unscale_e:
                                 logger.error(f"scaler.unscale_() failed at step {step}, opt_step {optimizer_steps}: {unscale_e}", exc_info=False)
                                 logger.warning("Skipping optimizer step due to unscale error.")
-                                # Need to zero grads manually if skipping step but backward happened
                                 optimizer.zero_grad(set_to_none=True)
                                 continue
 
@@ -255,10 +257,8 @@ def train_ctc_model(
                             scaler.step(optimizer)
                             scaler.update()
 
-                        else: # Not using AMP
-                            # Clip gradients directly
+                        else:
                             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                            # Standard optimizer step
                             optimizer.step()
                         optimizer.zero_grad(set_to_none=True)
 
