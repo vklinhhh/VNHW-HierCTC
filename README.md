@@ -238,9 +238,11 @@ After fine-tuning, the best model is saved to `<output_dir>/best_model_hf/` and 
 
 ## Training from Scratch
 
+If dataset in hugging face hub:
+
 ```bash
 python scripts/train_hierarchical_ctc.py \
-  --dataset_name vklinhhh/combined_vietnamese_cwl \
+  --dataset_name vklinhhh/test_vietnamese_cwl \
   --output_dir ./output/hierarchical_ctc \
   --epochs 30 \
   --batch_size 16 \
@@ -251,3 +253,21 @@ python scripts/train_hierarchical_ctc.py \
   --use_character_diacritic_compatibility \
   --use_amp
 ```
+
+If dataset in a flat folder structure (img+txt pair - same as fine-tuning ):
+
+```bash
+python scripts/train_hierarchical_ctc.py \
+  --data_folder ./training_data \
+  --output_dir ./output/hierarchical_ctc \
+  --epochs 30 \
+  --batch_size 16 \
+  --learning_rate 1e-4 \
+  --use_dynamic_fusion \
+  --use_feature_enhancer \
+  --use_visual_diacritic_attention \
+  --use_character_diacritic_compatibility \
+  --use_amp
+```
+> **Note on Data Preparation**: 
+> For best results with CTC-based training, crop line images as tightly as possible around the text, minimizing blank margins on the left and right. CTC alignment maps image patches (time steps) to characters - excess whitespace introduces uninformative patches that the model must learn to ignore, making alignment harder and slowing convergence.
