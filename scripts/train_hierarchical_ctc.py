@@ -3,13 +3,15 @@ import os
 import sys
 import argparse
 import torch
-from datasets import load_dataset, DatasetDict
+from datasets import load_dataset, DatasetDict, Dataset
 import logging
 import math
 import wandb  # Optional
 import json
 import numpy as np
 from pathlib import Path
+from PIL import Image
+from tqdm import tqdm
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 from model.hierarchical_ctc_model import (
@@ -32,6 +34,58 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger('TrainHierarchicalMultiScaleScript')
+
+
+IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif'}
+
+
+def load_local_dataset(data_folder, val_split=0.05, seed=42):
+    """
+    Load dataset từ local folder với cấu trúc image + txt pairs.
+
+    Cấu trúc folder:
+        data_folder/
+            line_001.png
+            line_001.txt
+            line_002.jpg
+            line_002.txt
+            ...
+    """
+    data_folder = Path(data_folder)
+    if not data_folder.exists():
+        raise ValueError(f"Data folder not found: {data_folder}")
+
+    image_files = sorted([
+        p for p in data_folder.iterdir()
+        if p.suffix.lower() in IMAGE_EXTENSIONS
+    ])
+
+    rows = []
+    skipped = 0
+    for img_path in tqdm(image_files, desc=f"Loading {data_folder.name}"):
+        txt_path = img_path.with_suffix('.txt')
+        if not txt_path.exists():
+            skipped += 1
+            continue
+        label = txt_path.read_text(encoding='utf-8').strip()
+        if not label:
+            skipped += 1
+            continue
+        try:
+            img = Image.open(img_path).convert('RGB')
+            rows.append({'image': img, 'label': label})
+        except Exception as e:
+            logger.warning(f"Cannot open image {img_path.name}: {e}")
+            skipped += 1
+
+    if not rows:
+        raise ValueError(f"No valid image-text pairs found in {data_folder}")
+
+    logger.info(f"Loaded {len(rows)} samples from {data_folder} ({skipped} skipped)")
+
+    dataset = Dataset.from_list(rows)
+    split = dataset.train_test_split(test_size=val_split, seed=seed)
+    return DatasetDict({'train': split['train'], 'validation': split['test']})
 
 BASE_CHAR_VOCAB_HIER = [
     '<blank>', '<unk>', 'a', 'b', 'c', 'd', 'e', 'g', 'h', 'i', 'k', 'l', 'm', 'n', 'o', 'p',
@@ -137,7 +191,12 @@ def freeze_model_layers(model, num_transformer_layers_to_tune=3, tune_diacritic_
 def main():
     parser = argparse.ArgumentParser(description='Train Hierarchical Multi-Scale CTC Vietnamese OCR model')
 
-    parser.add_argument('--dataset_name', type=str, default='cinnamon_ai')
+    parser.add_argument('--dataset_name', type=str, default=None,
+                        help='HuggingFace dataset repo name (e.g. vklinhhh/test_vietnamese_cwl). '
+                             'Mutually exclusive with --data_folder.')
+    parser.add_argument('--data_folder', type=str, default=None,
+                        help='Path to local folder with image+txt pairs. '
+                             'Mutually exclusive with --dataset_name.')
     parser.add_argument('--vision_encoder', type=str, default='microsoft/trocr-base-handwritten')
     parser.add_argument('--output_dir', type=str, default='outputs/hier_ctc_multiscale_model')
     parser.add_argument('--combined_char_vocab_json', type=str, default=None)
@@ -232,14 +291,27 @@ def main():
         with open(vocab_save_path, 'w', encoding='utf-8') as f:
             json.dump(combined_vocab, f, ensure_ascii=False, indent=4)
 
+    if not args.dataset_name and not args.data_folder:
+        logger.error("FATAL: Must provide either --dataset_name or --data_folder")
+        return 1
+    if args.dataset_name and args.data_folder:
+        logger.error("FATAL: --dataset_name and --data_folder are mutually exclusive")
+        return 1
+
     try:
-        logger.info(f'Loading dataset: {args.dataset_name}')
-        hf_dataset = load_dataset(args.dataset_name)
-        if 'validation' not in hf_dataset or 'train' not in hf_dataset:
-            logger.warning(f'Splitting train set for validation.')
-            if args.val_split <= 0: raise ValueError('--val_split required')
-            split_dataset = hf_dataset['train'].train_test_split(test_size=args.val_split, seed=args.seed)
-            hf_dataset = DatasetDict({'train': split_dataset['train'], 'validation': split_dataset['test']})
+        if args.data_folder:
+            logger.info(f"Loading local dataset from: {args.data_folder}")
+            hf_dataset = load_local_dataset(args.data_folder, val_split=args.val_split, seed=args.seed)
+        else:
+            logger.info(f'Loading HuggingFace dataset: {args.dataset_name}')
+            hf_dataset = load_dataset(args.dataset_name)
+            if 'validation' not in hf_dataset or 'train' not in hf_dataset:
+                logger.warning(f'Splitting train set for validation.')
+                if args.val_split <= 0:
+                    raise ValueError('--val_split required')
+                split_dataset = hf_dataset['train'].train_test_split(test_size=args.val_split, seed=args.seed)
+                hf_dataset = DatasetDict({'train': split_dataset['train'], 'validation': split_dataset['test']})
+
         train_hf_split = hf_dataset['train']
         val_hf_split = hf_dataset['validation']
 
